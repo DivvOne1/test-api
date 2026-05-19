@@ -1,0 +1,53 @@
+openapi: 3.0.3
+info:
+  title: Notification Service API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api
+paths:
+  /notifications/bulk:
+    post:
+      summary: Start a bulk notification campaign
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, priority, message, recipient_ids]
+              properties:
+                channel:
+                  type: string
+                  enum: [sms, email]
+                priority:
+                  type: string
+                  enum: [transactional, marketing]
+                message:
+                  type: string
+                idempotency_key:
+                  type: string
+                recipient_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '202':
+          description: Campaign accepted
+  /subscribers/{subscriberId}/notifications:
+    get:
+      summary: Get notification history for a subscriber
+      parameters:
+        - in: path
+          name: subscriberId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Notification history
