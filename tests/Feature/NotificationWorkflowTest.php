@@ -137,4 +137,29 @@ class NotificationWorkflowTest extends TestCase
             $notification->events->pluck('status')->all()
         );
     }
+
+    public function test_invalid_recipient_is_marked_as_dropped(): void
+    {
+        $this->postJson('/api/notifications/bulk', [
+            'channel' => 'sms',
+            'priority' => 'transactional',
+            'message' => 'Invalid destination',
+            'recipient_ids' => ['subscriber-invalid'],
+            'idempotency_key' => 'dropped-1',
+        ])->assertAccepted();
+
+        Artisan::call('notifications:consume', ['--once' => true]);
+
+        $notification = Notification::query()->firstOrFail()->load('events');
+
+        $this->assertSame(NotificationStatus::Dropped->value, $notification->status);
+        $this->assertSame(
+            ['queued', 'dropped'],
+            $notification->events->pluck('status')->all()
+        );
+
+        $historyResponse = $this->getJson('/api/subscribers/subscriber-invalid/notifications');
+        $historyResponse->assertOk()
+            ->assertJsonPath('notifications.0.status', NotificationStatus::Dropped->value);
+    }
 }

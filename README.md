@@ -40,6 +40,8 @@ http://localhost:15672
 
 Логин и пароль RabbitMQ по умолчанию: `guest / guest`.
 
+Примечание: миграции выполняет контейнер `app`. Контейнер `worker` ждет, пока схема БД уже будет подготовлена, чтобы избежать гонки на старте.
+
 ## Как запустить тесты
 
 После старта инфраструктуры выполни:
@@ -112,7 +114,7 @@ curl http://localhost:8000/api/subscribers/user-1/notifications
 
 OpenAPI-описание лежит в репозитории:
 
-- [`public/docs/openapi.yaml`](/C:/Users/DivvOne/Documents/New%20project%206/public/docs/openapi.yaml)
+- [`public/docs/openapi.yaml`](/C:/Users/DivvOne/PhpstormProjects/test-api/public/docs/openapi.yaml)
 
 После запуска через Docker файл будет доступен по ссылке:
 

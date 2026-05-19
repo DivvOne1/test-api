@@ -70,7 +70,8 @@ class ConsumeNotificationsCommand extends Command
             $processed++;
         } catch (Throwable $exception) {
             report($exception);
-            $message->nack(false, false);
+            // Requeue unexpected failures to preserve at-least-once delivery semantics.
+            $message->nack(false, true);
             $processed++;
         }
     }
