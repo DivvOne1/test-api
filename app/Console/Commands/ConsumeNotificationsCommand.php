@@ -5,8 +5,11 @@ namespace App\Console\Commands;
 use App\Services\NotificationProcessingService;
 use App\Services\RabbitMqClient;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use PhpAmqpLib\Message\AMQPMessage;
+use JsonException;
 use Throwable;
+use UnexpectedValueException;
 
 class ConsumeNotificationsCommand extends Command
 {
@@ -64,8 +67,12 @@ class ConsumeNotificationsCommand extends Command
     private function processMessage(AMQPMessage $message, int &$processed): void
     {
         try {
-            $payload = json_decode($message->getBody(), true, flags: JSON_THROW_ON_ERROR);
+            $payload = $this->decodePayload($message);
             $this->processingService->process($payload['notification_id']);
+            $message->ack();
+            $processed++;
+        } catch (JsonException|ModelNotFoundException|UnexpectedValueException $exception) {
+            report($exception);
             $message->ack();
             $processed++;
         } catch (Throwable $exception) {
@@ -74,5 +81,25 @@ class ConsumeNotificationsCommand extends Command
             $message->nack(false, true);
             $processed++;
         }
+    }
+
+    /**
+     * @return array{notification_id: string}
+     */
+    private function decodePayload(AMQPMessage $message): array
+    {
+        $payload = json_decode($message->getBody(), true, flags: JSON_THROW_ON_ERROR);
+
+        if (! is_array($payload) || ! array_key_exists('notification_id', $payload)) {
+            throw new UnexpectedValueException('Notification payload must contain notification_id.');
+        }
+
+        if (! is_scalar($payload['notification_id']) || $payload['notification_id'] === '') {
+            throw new UnexpectedValueException('Notification payload contains invalid notification_id.');
+        }
+
+        return [
+            'notification_id' => (string) $payload['notification_id'],
+        ];
     }
 }
