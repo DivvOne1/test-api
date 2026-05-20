@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\NotificationStatus;
 use App\Models\Notification;
+use App\Models\NotificationBatch;
 use App\Models\User;
 use App\Services\RabbitMqClient;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
@@ -112,6 +113,45 @@ class NotificationWorkflowTest extends TestCase
             ->assertJsonMissingPath('notifications.0.provider_message_id')
             ->assertJsonMissingPath('notifications.0.last_error')
             ->assertJsonPath('pagination.per_page', 50);
+    }
+
+    public function test_subscriber_history_requires_authentication(): void
+    {
+        $this->getJson('/api/subscribers/notifications')
+            ->assertUnauthorized();
+    }
+
+    public function test_subscriber_history_supports_pagination_for_authenticated_user(): void
+    {
+        $user = $this->authenticate();
+        $subscriberId = (string) $user->getAuthIdentifier();
+
+        foreach (range(1, 3) as $index) {
+            $batch = NotificationBatch::query()->create([
+                'idempotency_key' => "history-{$index}",
+                'request_fingerprint' => hash('sha256', "history-{$index}"),
+                'channel' => 'sms',
+                'priority' => 'marketing',
+                'message' => "Message {$index}",
+                'total_recipients' => 1,
+            ]);
+
+            Notification::query()->create([
+                'notification_batch_id' => $batch->id,
+                'subscriber_id' => $subscriberId,
+                'channel' => 'sms',
+                'priority' => 'marketing',
+                'message' => "Message {$index}",
+                'status' => NotificationStatus::Queued->value,
+            ]);
+        }
+
+        $this->getJson('/api/subscribers/notifications?per_page=2')
+            ->assertOk()
+            ->assertJsonPath('subscriber_id', $subscriberId)
+            ->assertJsonPath('pagination.per_page', 2)
+            ->assertJsonPath('pagination.total', 3)
+            ->assertJsonCount(2, 'notifications');
     }
 
     public function test_transactional_notifications_preempt_marketing_traffic(): void

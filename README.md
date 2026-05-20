@@ -77,7 +77,7 @@ docker compose up -d app worker
   "channel": "sms",
   "priority": "transactional",
   "message": "Your OTP is 1234",
-  "recipient_ids": ["user-1", "user-2"],
+  "recipient_ids": ["1", "2"],
   "idempotency_key": "otp-batch-001"
 }
 ```
@@ -118,6 +118,36 @@ curl \
 
 - тот же payload -> вернется существующий batch;
 - другой payload -> `409 Conflict`.
+
+## Auth For Local Testing
+
+Для demo API использует `Laravel Sanctum`.
+
+Создай тестового пользователя и token:
+
+```bash
+docker compose exec app php artisan tinker
+```
+
+```php
+$user = \App\Models\User::firstOrCreate(
+    ['email' => 'user-1@example.com'],
+    ['name' => 'User 1', 'password' => bcrypt('password')]
+);
+
+$token = $user->createToken('local')->plainTextToken;
+```
+
+Используй полученный token:
+
+```text
+Authorization: Bearer <token>
+```
+
+Для ручной проверки истории используй `recipient_ids`, совпадающие с `users.id`.
+Например, если token создан для пользователя с `id = 1`, то в bulk-запросе передавай `"recipient_ids": ["1"]`.
+
+Unexpected worker errors are rejected without requeue to avoid poison-message loops. In production they should be routed to DLQ for investigation.
 
 ## Swagger / OpenAPI
 
