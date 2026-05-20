@@ -41,32 +41,33 @@ class NotificationController extends Controller
         ], 202);
     }
 
-    public function subscriberHistory(Request $request, string $subscriberId): JsonResponse
+    public function subscriberHistory(Request $request): JsonResponse
     {
+        $subscriberId = (string) $request->user()->getAuthIdentifier();
+        $perPage = min(max($request->integer('per_page', 50), 1), 100);
+
         $notifications = Notification::query()
-            ->with(['events', 'batch'])
+            ->with('batch')
             ->where('subscriber_id', $subscriberId)
             ->orderByDesc('created_at')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'subscriber_id' => $subscriberId,
-            'notifications' => $notifications->map(function (Notification $notification) {
+            'pagination' => [
+                'current_page' => $notifications->currentPage(),
+                'per_page' => $notifications->perPage(),
+                'total' => $notifications->total(),
+                'last_page' => $notifications->lastPage(),
+            ],
+            'notifications' => $notifications->getCollection()->map(function (Notification $notification) {
                 return [
                     'notification_id' => $notification->id,
                     'batch_id' => $notification->notification_batch_id,
                     'channel' => $notification->channel,
                     'priority' => $notification->priority,
-                    'message' => $notification->message,
                     'status' => $notification->status,
                     'attempts' => $notification->attempts,
-                    'provider_message_id' => $notification->provider_message_id,
-                    'last_error' => $notification->last_error,
-                    'events' => $notification->events->map(fn ($event) => [
-                        'status' => $event->status,
-                        'meta' => $event->meta,
-                        'created_at' => optional($event->created_at)->toIso8601String(),
-                    ]),
                     'created_at' => optional($notification->created_at)->toIso8601String(),
                     'updated_at' => optional($notification->updated_at)->toIso8601String(),
                 ];

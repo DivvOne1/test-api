@@ -18,6 +18,7 @@ class NotificationBatch extends Model
 
     protected $fillable = [
         'idempotency_key',
+        'request_fingerprint',
         'channel',
         'priority',
         'message',

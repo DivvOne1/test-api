@@ -8,6 +8,8 @@ paths:
   /notifications/bulk:
     post:
       summary: Start a bulk notification campaign
+      security:
+        - bearerAuth: []
       parameters:
         - in: header
           name: Idempotency-Key
@@ -39,15 +41,27 @@ paths:
       responses:
         '202':
           description: Campaign accepted
-  /subscribers/{subscriberId}/notifications:
+        '409':
+          description: Idempotency key conflicts with different payload
+  /subscribers/notifications:
     get:
-      summary: Get notification history for a subscriber
+      summary: Get paginated notification history for the current subscriber
+      security:
+        - bearerAuth: []
       parameters:
-        - in: path
-          name: subscriberId
-          required: true
+        - in: query
+          name: per_page
+          required: false
           schema:
-            type: string
+            type: integer
+            minimum: 1
+            maximum: 100
       responses:
         '200':
           description: Notification history
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -9,6 +9,7 @@ use App\Models\NotificationBatch;
 use App\Models\NotificationStatusEvent;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class BulkNotificationService
 {
@@ -25,6 +26,7 @@ class BulkNotificationService
         string $idempotencyKey,
     ): NotificationBatch {
         $notificationsToPublish = [];
+        $requestFingerprint = $this->makeFingerprint($channel, $priority, $message, $recipientIds);
 
         try {
             $batch = DB::transaction(function () use (
@@ -33,6 +35,7 @@ class BulkNotificationService
                 $message,
                 $recipientIds,
                 $idempotencyKey,
+                $requestFingerprint,
                 &$notificationsToPublish
             ) {
                 $existingBatch = NotificationBatch::query()
@@ -40,11 +43,14 @@ class BulkNotificationService
                     ->first();
 
                 if ($existingBatch) {
+                    $this->ensureMatchingFingerprint($existingBatch, $requestFingerprint);
+
                     return $existingBatch->load('notifications');
                 }
 
                 $batch = NotificationBatch::query()->create([
                     'idempotency_key' => $idempotencyKey,
+                    'request_fingerprint' => $requestFingerprint,
                     'channel' => $channel,
                     'priority' => $priority,
                     'message' => $message,
@@ -76,10 +82,14 @@ class BulkNotificationService
                 return $batch->load('notifications');
             });
         } catch (QueryException) {
-            return NotificationBatch::query()
+            $existingBatch = NotificationBatch::query()
                 ->where('idempotency_key', $idempotencyKey)
                 ->with('notifications')
                 ->firstOrFail();
+
+            $this->ensureMatchingFingerprint($existingBatch, $requestFingerprint);
+
+            return $existingBatch;
         }
 
         foreach ($notificationsToPublish as $notification) {
@@ -90,5 +100,36 @@ class BulkNotificationService
         }
 
         return $batch;
+    }
+
+    private function makeFingerprint(
+        string $channel,
+        string $priority,
+        string $message,
+        array $recipientIds,
+    ): string {
+        $normalizedRecipientIds = array_map(
+            static fn ($recipientId): string => (string) $recipientId,
+            $recipientIds,
+        );
+
+        sort($normalizedRecipientIds);
+
+        return hash(
+            'sha256',
+            json_encode([
+                'channel' => $channel,
+                'priority' => $priority,
+                'message' => $message,
+                'recipient_ids' => $normalizedRecipientIds,
+            ], JSON_THROW_ON_ERROR),
+        );
+    }
+
+    private function ensureMatchingFingerprint(NotificationBatch $batch, string $requestFingerprint): void
+    {
+        if ($batch->request_fingerprint !== $requestFingerprint) {
+            throw new ConflictHttpException('Idempotency key was already used with different request payload.');
+        }
     }
 }

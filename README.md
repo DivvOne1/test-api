@@ -100,15 +100,24 @@ docker compose up -d app worker
 }
 ```
 
-### GET `/api/subscribers/{subscriberId}/notifications`
+### GET `/api/subscribers/notifications`
 
-Возвращает историю и текущий статус всех уведомлений подписчика.
+Возвращает пагинированную историю и текущий статус уведомлений текущего аутентифицированного пользователя.
+
+Требует `Authorization: Bearer <token>`.
 
 Пример:
 
 ```bash
-curl http://localhost:8000/api/subscribers/user-1/notifications
+curl \
+  -H "Authorization: Bearer <token>" \
+  "http://localhost:8000/api/subscribers/notifications?per_page=20"
 ```
+
+При повторном использовании одного `idempotency_key`:
+
+- тот же payload -> вернется существующий batch;
+- другой payload -> `409 Conflict`.
 
 ## Swagger / OpenAPI
 

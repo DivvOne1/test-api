@@ -14,5 +14,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::post('/notifications/bulk', [NotificationController::class, 'store']);
-Route::get('/subscribers/{subscriberId}/notifications', [NotificationController::class, 'subscriberHistory']);
+Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::post('/notifications/bulk', [NotificationController::class, 'store']);
+    Route::get('/subscribers/notifications', [NotificationController::class, 'subscriberHistory']);
+});

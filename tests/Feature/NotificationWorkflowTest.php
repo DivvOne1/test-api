@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Enums\NotificationStatus;
 use App\Models\Notification;
+use App\Models\User;
 use App\Services\RabbitMqClient;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Redis;
+use Laravel\Sanctum\Sanctum;
+use PhpAmqpLib\Message\AMQPMessage;
 use Tests\TestCase;
 
 class NotificationWorkflowTest extends TestCase
@@ -28,6 +31,8 @@ class NotificationWorkflowTest extends TestCase
 
     public function test_bulk_request_is_idempotent(): void
     {
+        $this->authenticate();
+
         $payload = [
             'channel' => 'sms',
             'priority' => 'marketing',
@@ -49,13 +54,41 @@ class NotificationWorkflowTest extends TestCase
         $this->assertDatabaseCount('notifications', 2);
     }
 
+    public function test_reusing_idempotency_key_with_different_payload_returns_conflict(): void
+    {
+        $this->authenticate();
+
+        $firstPayload = [
+            'channel' => 'sms',
+            'priority' => 'marketing',
+            'message' => 'Promo message',
+            'recipient_ids' => ['user-1', 'user-2'],
+            'idempotency_key' => 'bulk-1',
+        ];
+
+        $secondPayload = [
+            'channel' => 'email',
+            'priority' => 'transactional',
+            'message' => 'OTP',
+            'recipient_ids' => ['user-9'],
+            'idempotency_key' => 'bulk-1',
+        ];
+
+        $this->postJson('/api/notifications/bulk', $firstPayload)->assertAccepted();
+
+        $this->postJson('/api/notifications/bulk', $secondPayload)
+            ->assertStatus(409);
+    }
+
     public function test_worker_updates_status_history_for_successful_delivery(): void
     {
+        $user = $this->authenticate();
+
         $response = $this->postJson('/api/notifications/bulk', [
             'channel' => 'email',
             'priority' => 'transactional',
             'message' => 'Access code 1234',
-            'recipient_ids' => ['subscriber-1'],
+            'recipient_ids' => [(string) $user->getAuthIdentifier()],
             'idempotency_key' => 'delivery-1',
         ]);
 
@@ -71,13 +104,20 @@ class NotificationWorkflowTest extends TestCase
             $notification->events->pluck('status')->all()
         );
 
-        $historyResponse = $this->getJson('/api/subscribers/subscriber-1/notifications');
+        $historyResponse = $this->getJson('/api/subscribers/notifications');
         $historyResponse->assertOk()
-            ->assertJsonPath('notifications.0.status', NotificationStatus::Delivered->value);
+            ->assertJsonPath('subscriber_id', (string) $user->getAuthIdentifier())
+            ->assertJsonPath('notifications.0.status', NotificationStatus::Delivered->value)
+            ->assertJsonMissingPath('notifications.0.message')
+            ->assertJsonMissingPath('notifications.0.provider_message_id')
+            ->assertJsonMissingPath('notifications.0.last_error')
+            ->assertJsonPath('pagination.per_page', 50);
     }
 
     public function test_transactional_notifications_preempt_marketing_traffic(): void
     {
+        $this->authenticate();
+
         $this->postJson('/api/notifications/bulk', [
             'channel' => 'sms',
             'priority' => 'marketing',
@@ -112,6 +152,8 @@ class NotificationWorkflowTest extends TestCase
 
     public function test_temporary_failures_are_retried_and_eventually_delivered(): void
     {
+        $this->authenticate();
+
         $this->postJson('/api/notifications/bulk', [
             'channel' => 'email',
             'priority' => 'transactional',
@@ -140,13 +182,17 @@ class NotificationWorkflowTest extends TestCase
 
     public function test_invalid_recipient_is_marked_as_dropped(): void
     {
+        $user = $this->authenticate();
+
         $this->postJson('/api/notifications/bulk', [
             'channel' => 'sms',
             'priority' => 'transactional',
             'message' => 'Invalid destination',
-            'recipient_ids' => ['subscriber-invalid'],
+            'recipient_ids' => [(string) $user->getAuthIdentifier()],
             'idempotency_key' => 'dropped-1',
         ])->assertAccepted();
+
+        Notification::query()->update(['subscriber_id' => 'subscriber-invalid']);
 
         Artisan::call('notifications:consume', ['--once' => true]);
 
@@ -157,9 +203,35 @@ class NotificationWorkflowTest extends TestCase
             ['queued', 'dropped'],
             $notification->events->pluck('status')->all()
         );
+    }
 
-        $historyResponse = $this->getJson('/api/subscribers/subscriber-invalid/notifications');
-        $historyResponse->assertOk()
-            ->assertJsonPath('notifications.0.status', NotificationStatus::Dropped->value);
+    public function test_invalid_queue_payload_is_discarded_instead_of_requeued_forever(): void
+    {
+        $client = app(RabbitMqClient::class);
+        $channel = $client->channel();
+
+        $channel->basic_publish(
+            new AMQPMessage('{broken json', [
+                'content_type' => 'application/json',
+                'delivery_mode' => 2,
+            ]),
+            config('notifications.exchange'),
+            config('notifications.routing_key'),
+        );
+
+        Artisan::call('notifications:consume', ['--once' => true]);
+
+        $this->assertNull($channel->basic_get(config('notifications.queue'), true));
+
+        $client->close();
+    }
+
+    private function authenticate(): User
+    {
+        $user = User::factory()->create();
+
+        Sanctum::actingAs($user, ['notifications.read', 'notifications.write']);
+
+        return $user;
     }
 }
